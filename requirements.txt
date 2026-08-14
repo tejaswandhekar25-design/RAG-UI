@@ -1,0 +1,13 @@
+# Core UI
+streamlit>=1.35.0
+
+# RAG retrieval pipeline (Member 2's dependencies)
+langchain_chroma>=1.1.0
+langchain_huggingface>=1.2.2
+sentence-transformers>=3.0.0
+
+# LLM integration (Member 3) — new SDK, replaces deprecated google-generativeai
+google-genai>=1.0.0
+
+# Transitive but pinning for reproducibility
+chromadb>=1.0.0
