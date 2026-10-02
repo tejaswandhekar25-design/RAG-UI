@@ -441,10 +441,3 @@ if user_input:
     submit_question(user_input)
 
 
-# ── Footer ───────────────────────────────────────────────────────────────────
-st.markdown("""
-<div class="app-footer">
-    🌾 Built for Hackathon 2026 — Agriculture RAG Team &nbsp;•&nbsp; 
-    Powered by ChromaDB + Embeddings + LLM
-</div>
-""", unsafe_allow_html=True)

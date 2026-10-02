@@ -2,6 +2,8 @@
 
 An AI-powered chatbot that answers questions about Indian agriculture data using **Retrieval-Augmented Generation (RAG)**.
 
+![Agriculture RAG Assistant Screenshot](https://files.catbox.moe/pc6y3n.png)
+
 ## What It Does
 
 Ask natural-language questions about Indian crop production, yield, fertilizer/pesticide usage, soil data, and weather patterns. The system:
@@ -15,6 +17,7 @@ Ask natural-language questions about Indian crop production, yield, fertilizer/p
 - **States**: All major Indian states (Punjab, Maharashtra, UP, Karnataka, etc.)
 - **Metrics**: Area, Production, Yield, Fertilizer usage, Pesticide usage, Season, Year
 - **Additional**: State-level soil data (N, P, K, pH) and weather data (1997–2020)
+
 
 ---
 
@@ -37,6 +40,10 @@ Get a free API key at: https://aistudio.google.com/apikey
 ```bash
 streamlit run app.py
 ```
+> **Windows Note**: If PowerShell says `'streamlit' is not recognized`, run:
+> ```bash
+> python -m streamlit run app.py
+> ```
 
 The app will open at `http://localhost:8501`.
 
@@ -64,6 +71,7 @@ The app will open at `http://localhost:8501`.
 ├── rag_backend.py            # LLM integration (prompt + Gemini API call)
 ├── retrieval_pipeline.py     # ChromaDB retrieval (embeddings + similarity search)
 ├── db/chroma_db/             # Persisted ChromaDB vector store
+├── assets/                   # App screenshots & UI assets
 ├── requirements.txt          # Python dependencies
 ├── .streamlit/secrets.toml   # API keys (git-ignored)
 ├── .gitignore
@@ -93,13 +101,3 @@ User Question
   Final Answer
 ```
 
----
-
-## Team
-
-Built for **Agriculture RAG Hackathon 2026** 🌾
-
-- **Member 1**: Data ingestion pipeline (CSV → ChromaDB)
-- **Member 2**: Retrieval pipeline (ChromaDB similarity search)
-- **Member 3**: LLM integration (Gemini prompting + answer generation)
-- **Member 4**: UI + deployment (Streamlit + Streamlit Cloud)

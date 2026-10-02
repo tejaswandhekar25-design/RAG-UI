@@ -1,12 +1,11 @@
-# rag_backend.py — Member 3: LLM integration layer
+# rag_backend.py — LLM integration layer
 # This file connects the retrieval pipeline (ChromaDB) to the Gemini LLM.
 # The UI calls answer(query) — that's it.
 
 import os
 from google import genai
 
-# ── Import the actual retrieval function from the existing pipeline ──────────
-# This is the real retrieval_pipeline.py (Member 2's work), copied into this project.
+# ── Import the retrieval function from the pipeline ──────────────────────────
 # It uses: ChromaDB + sentence-transformers/all-MiniLM-L6-v2 embeddings
 # Function signature: retrieve(query, k=3, score_threshold=0.3) -> list[str]
 from retrieval_pipeline import retrieve
@@ -41,21 +40,27 @@ def _get_api_key() -> str:
 # ── Prompt template ─────────────────────────────────────────────────────────
 SYSTEM_PROMPT = (
     "You are an agriculture data assistant for India. "
-    "Answer the user's question using ONLY the context below, which is "
-    "retrieved from an Indian agriculture dataset containing information about "
-    "crops, years, seasons, states, area, production, fertilizer usage, "
-    "pesticide usage, and yield.\n\n"
+    "Answer the user's question using the context below, which is "
+    "retrieved from Indian agriculture datasets containing information about "
+    "crops, years, seasons, states, districts, area, production, fertilizer usage, "
+    "pesticide usage, yield, temperature, rainfall, soil data, and more.\n\n"
     "Rules:\n"
-    "1. If the context does not contain enough information to answer "
-    "confidently, say so honestly instead of guessing or hallucinating.\n"
-    "2. If the question requires comparing or ranking across multiple "
-    "crops/states and the context only has a few rows, explicitly note "
-    "that your answer is based on limited retrieved data, not the full dataset.\n"
+    "1. ALWAYS try to answer the question using the provided context. "
+    "Extract relevant numbers, trends, and comparisons from the data chunks.\n"
+    "2. If the context contains partial information (e.g., data for some "
+    "crops/states but not all), answer based on what IS available and note "
+    "that the answer covers the data found in the retrieved context.\n"
     "3. When citing numbers, include the units and source fields "
     "(e.g., yield in tonnes/hectare, area in hectares).\n"
     "4. Be concise but informative. Use bullet points or tables when "
     "comparing multiple items.\n"
-    "5. Answer in the same language the question was asked in."
+    "5. For reasoning or analytical questions (e.g., 'why do yields differ'), "
+    "use the data in context (soil, weather, fertilizer) to provide a "
+    "data-driven answer. You may combine data insights with general "
+    "agricultural knowledge for such questions.\n"
+    "6. Only say you cannot answer if the context is completely irrelevant "
+    "to the question. If there is ANY related data, use it to form an answer.\n"
+    "7. Answer in the same language the question was asked in."
 )
 
 
@@ -89,9 +94,23 @@ def answer(query: str) -> str:
     if not query:
         return "Please enter a question to get started! 🌾"
 
+    # Quick friendly greeting check
+    greetings = {"hi", "hello", "hey", "namaste", "hola", "good morning", "good evening", "good afternoon"}
+    if query.lower().strip("!?., ") in greetings:
+        return (
+            "Namaste! 🙏 I'm your **Agriculture RAG Assistant**.\n\n"
+            "I can help you explore Indian agriculture data across states, crops, yields, "
+            "fertilizer/pesticide usage, and historical trends.\n\n"
+            "💡 **Try asking questions like:**\n"
+            "- *What is the yield of wheat in Punjab?*\n"
+            "- *Compare rice and wheat production across states*\n"
+            "- *Which crops use the most fertilizer?*\n"
+            "- *Top 5 crops by area in Maharashtra*"
+        )
+
     # ── Step 1: Retrieve ─────────────────────────────────────────────────
     try:
-        chunks = retrieve(query, k=5, score_threshold=0.3)
+        chunks = retrieve(query, k=8)
     except Exception as e:
         print(f"[RAG Backend] Retrieval error: {e}")
         chunks = []
@@ -110,35 +129,42 @@ def answer(query: str) -> str:
     # ── Step 3: Build prompt ─────────────────────────────────────────────
     prompt = _build_prompt(query, chunks)
 
-    # ── Step 4: Call Gemini LLM (new google-genai SDK) ───────────────────
+    # ── Step 4: Call Gemini LLM with resilient model fallback ───────────
     try:
         api_key = _get_api_key()
         client = genai.Client(api_key=api_key)
-
-        # Using gemini-3.5-flash — fast, cheap, great for RAG grounding
-        response = client.models.generate_content(
-            model="gemini-3.5-flash",
-            contents=prompt,
-        )
-
-        answer_text = response.text.strip()
-        if not answer_text:
-            return (
-                "I retrieved some data but couldn't generate a clear answer. "
-                "Try rephrasing your question. 🌱"
-            )
-        return answer_text
-
     except ValueError as e:
-        # API key not configured
         return f"⚠️ {str(e)}"
-
     except Exception as e:
-        print(f"[RAG Backend] LLM error: {e}")
-        return (
-            "Sorry, I encountered an error while generating the answer. "
-            "This might be a temporary API issue. Please try again in a moment. 🌱"
-        )
+        return f"⚠️ API setup error: {str(e)}"
+
+    candidate_models = [
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-flash-latest",
+        "gemini-3.8-flash",
+    ]
+
+    last_error = None
+    for model_name in candidate_models:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+            )
+            answer_text = response.text.strip() if response and response.text else ""
+            if answer_text:
+                return answer_text
+        except Exception as e:
+            last_error = e
+            print(f"[RAG Backend] Model {model_name} failed: {e}. Trying fallback...")
+            continue
+
+    print(f"[RAG Backend] All models failed. Last error: {last_error}")
+    return (
+        "Sorry, the AI service is currently experiencing high demand or temporary network issues. "
+        "Please try again in a few moments. 🌱"
+    )
 
 
 # ── Quick test (run this file directly to verify) ───────────────────────────

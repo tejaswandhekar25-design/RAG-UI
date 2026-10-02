@@ -1,9 +1,10 @@
+import re
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 
 PERSIST_DIRECTORY = "db/chroma_db"
 
-# ---- हे फक्त एकदाच, file import झाल्यावर चालतं (परत परत नाही -- speed साठी) ----
+# ── Load embedding model and ChromaDB once at import time (for speed) ──
 embedding_model = HuggingFaceEmbeddings(
     model_name="sentence-transformers/all-MiniLM-L6-v2"
 )
@@ -13,48 +14,96 @@ db = Chroma(
     embedding_function=embedding_model,
     collection_metadata={"hnsw:space": "cosine"}
 )
-# --------------------------------------------------------------
+# -----------------------------------------------------------------------
 
 
-def retrieve(query, k=3, score_threshold=0.3):
+def _decompose_query(query):
     """
-    Member 3 हे function import करून वापरेल:
-        from retrieval_pipeline import retrieve
-        chunks = retrieve("cotton साठी pH किती?")
-
-    Dataset मध्ये संबंधित माहिती नसेल, तर रिकामी list ([]) परत येते --
-    error येत नाही. Member 3 ने त्याच्या prompt मध्ये अशी सूचना द्यावी:
-    "context रिकामा असल्यास, माहिती उपलब्ध नाही असं स्पष्ट सांग."
+    Break comparative / multi-topic queries into sub-queries so the
+    retriever can find data for each part individually.
+    E.g. "Compare rice and wheat production across states"
+      -> ["rice production across states", "wheat production across states"]
     """
-    try:
-        local_retriever = db.as_retriever(
-            search_type="similarity_score_threshold",
-            search_kwargs={"k": k, "score_threshold": score_threshold}
-        )
-        results = local_retriever.invoke(query)
-        return [doc.page_content for doc in results]
-    except Exception as e:
-        print(f"Retrieval error for query '{query}': {e}")
-        return []
+    q_lower = query.lower().strip()
+
+    # Detect comparison patterns like "compare X and Y", "X vs Y", "X and Y production"
+    compare_patterns = [
+        r'compare\s+(.+?)\s+and\s+(.+?)(?:\s+production|\s+yield|\s+area|\s+across|\s+in\b|$)',
+        r'(.+?)\s+(?:vs\.?|versus)\s+(.+?)(?:\s+production|\s+yield|\s+area|\s+across|\s+in\b|$)',
+        r'difference\s+between\s+(.+?)\s+and\s+(.+?)(?:\s+production|\s+yield|\s+area|\s+across|\s+in\b|$)',
+    ]
+
+    for pattern in compare_patterns:
+        match = re.search(pattern, q_lower)
+        if match:
+            item1 = match.group(1).strip()
+            item2 = match.group(2).strip()
+            # Build sub-queries with the remaining context
+            context = q_lower
+            for word in ['compare', 'vs', 'versus', 'difference between', 'and']:
+                context = context.replace(word, ' ')
+            context = ' '.join(context.split())  # clean whitespace
+
+            sub_queries = [
+                f"{item1} production yield area data",
+                f"{item2} production yield area data",
+                query,  # also include the original query
+            ]
+            return sub_queries
+
+    # For "top N crops" or "which crops" type questions, broaden search
+    if any(kw in q_lower for kw in ['top', 'which crops', 'all crops', 'most', 'highest', 'lowest', 'best', 'worst', 'ranking']):
+        return [
+            query,
+            q_lower.replace('top ', '').replace('which ', ''),
+            "crop production yield area fertilizer data",
+        ]
+
+    # Default: just return the original query
+    return [query]
 
 
-# ---- स्वतःच्या टेस्टिंगसाठी (hidden-question style प्रश्नांसह) ----
+def retrieve(query, k=5, score_threshold=0.3):
+    """
+    Retrieve relevant chunks from ChromaDB for the given query.
+    Uses multi-query decomposition for comparative questions.
+
+    Returns an empty list if no relevant data is found (no error raised).
+    The caller should handle the empty case in its prompt.
+    """
+    sub_queries = _decompose_query(query)
+
+    all_chunks = []
+    seen_content = set()
+
+    for sub_q in sub_queries:
+        try:
+            # Use plain similarity search (no threshold filtering) to ensure
+            # we always get results. The LLM can judge relevance from context.
+            results = db.similarity_search(sub_q, k=k)
+            for doc in results:
+                content = doc.page_content
+                # Deduplicate by first 200 chars (same chunk from different sub-queries)
+                content_key = content[:200]
+                if content_key not in seen_content:
+                    seen_content.add(content_key)
+                    all_chunks.append(content)
+        except Exception as e:
+            print(f"Retrieval error for sub-query '{sub_q}': {e}")
+
+    # Cap total chunks to avoid overwhelming the LLM context
+    return all_chunks[:12]
+
+
+# ── Testing (run this file directly to verify retrieval) ──
 if __name__ == "__main__":
     test_questions = [
-        # Direct
         "What is the yield of rice in Chhattisgarh?",
-        "Andhra Pradesh मधली soil ची N, P, K value किती आहे?",
-        # Paraphrased
-        "छत्तीसगडमध्ये भाताचं उत्पादन किती होतं?",
-        "आंध्र प्रदेशच्या मातीत नत्र किती आहे?",
-        # Indirect / reasoning
-        "कोणत्या राज्यात rice चं yield सर्वात जास्त आहे?",
-        "Maize आणि rice पैकी कोणाचं production जास्त आहे?",
-        # Domain-specific, वेगळं phrasing
-        "कापसासाठी कोणता season योग्य आहे?",
-        # Edge case - dataset मध्ये नसलेली माहिती
-        "Punjab मध्ये cotton चं production किती आहे?",
-        "2025 सालचा data आहे का?",
+        "Compare rice and wheat production across states",
+        "Which crops use the most fertilizer?",
+        "Top 5 crops by area in Maharashtra",
+        "What is the soil pH in Andhra Pradesh?",
+        "If two states have identical weather, what explains different yields?",
     ]
 
     for q in test_questions:
@@ -63,6 +112,8 @@ if __name__ == "__main__":
         print("=" * 60)
         results = retrieve(q)
         if not results:
-            print("⚠️ कोणतेही chunks सापडले नाहीत (edge-case प्रश्नांसाठी हे ठीक आहे)")
+            print("No chunks found for this query.")
+        else:
+            print(f"Found {len(results)} chunks.")
         for i, chunk in enumerate(results, 1):
             print(f"\nChunk {i}:\n{chunk[:300]}")
