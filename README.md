@@ -1,5 +1,9 @@
 # 🌾 Agriculture RAG Assistant
 
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://agriculture-rag-bot.streamlit.app)
+
+🔗 **Live Demo**: [https://agriculture-rag-bot.streamlit.app](https://agriculture-rag-bot.streamlit.app)
+
 An AI-powered chatbot that answers questions about Indian agriculture data using **Retrieval-Augmented Generation (RAG)**.
 
 ![Agriculture RAG Assistant Screenshot](https://files.catbox.moe/pc6y3n.png)
